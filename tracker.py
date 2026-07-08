@@ -63,9 +63,14 @@ def _req(url, method="GET", headers=None, data=None):
     req = urllib.request.Request(url, method=method, headers=headers or {}, data=data)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, json.loads(r.read().decode())
+            raw = r.read().decode()
+            return r.status, (json.loads(raw) if raw.strip() else {})
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read().decode())
+        raw = e.read().decode()
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, {"raw": raw}
 
 
 def refresh_access_token():
