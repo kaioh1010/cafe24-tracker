@@ -9,31 +9,35 @@
   :root{--navy:#12283F;--ink:#1a2b3c;--slate:#5a6b7b;--line:#e3e0d8;--paper:#f5f2ea;--qty:#1D9E75;--rev:#D85A30;}
   *{box-sizing:border-box;margin:0;padding:0;}
   body{font-family:ui-sans-serif,system-ui,-apple-system,"Malgun Gothic",sans-serif;background:var(--paper);color:var(--ink);min-height:100vh;padding:32px 24px;}
-  .wrap{max-width:860px;margin:0 auto;}
+  .wrap{max-width:1040px;margin:0 auto;}
   .head{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;border-bottom:2px solid var(--navy);padding-bottom:14px;}
   h1{font-size:26px;font-weight:700;letter-spacing:-0.02em;}
   .repo{font-size:13px;color:var(--slate);}
-  .bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px;}
+  .bar{display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap;margin-top:18px;}
   button.reload{padding:8px 16px;font-size:14px;border:none;border-radius:8px;cursor:pointer;background:var(--navy);color:#fff;font-weight:600;}
   .sync{font-size:12px;color:var(--slate);}
   .upload{margin-left:auto;font-size:13px;color:var(--navy);cursor:pointer;text-decoration:underline;}
   .err{margin-top:14px;padding:12px 14px;background:#faece7;border:1px solid var(--rev);border-radius:8px;font-size:13px;color:#712b13;}
-  .controls{display:flex;gap:20px;flex-wrap:wrap;margin-top:22px;align-items:flex-end;}
   .cap{font-size:12px;color:var(--slate);margin-bottom:6px;}
   .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;}
   .seg button{padding:8px 16px;font-size:14px;border:none;cursor:pointer;background:transparent;color:var(--ink);}
   .seg button.on{background:var(--navy);color:#fff;font-weight:600;}
   select{padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff;color:var(--ink);min-width:130px;}
-  .list{margin-top:24px;}
-  .row{display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);}
-  .rank{width:26px;text-align:right;font-size:15px;font-weight:700;color:var(--slate);}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:26px;}
+  @media(max-width:720px){.cols{grid-template-columns:1fr;}}
+  .col h2{font-size:16px;font-weight:600;padding-bottom:10px;border-bottom:2px solid;display:flex;align-items:center;gap:8px;}
+  .col.qty h2{border-color:var(--qty);}
+  .col.rev h2{border-color:var(--rev);}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+  .row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);}
+  .rank{width:22px;text-align:right;font-size:14px;font-weight:700;color:var(--slate);}
   .rank.top{color:var(--navy);}
   .name{flex:1;min-width:0;}
-  .nm{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .nm{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .track{height:6px;background:#e9e5db;border-radius:3px;margin-top:6px;overflow:hidden;}
   .fill{height:100%;border-radius:3px;}
-  .val{width:130px;text-align:right;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;}
-  .foot{margin-top:18px;font-size:12px;color:var(--slate);}
+  .val{width:110px;text-align:right;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;}
+  .foot{margin-top:20px;font-size:12px;color:var(--slate);}
   .empty{color:var(--slate);font-size:14px;padding:20px 0;}
 </style>
 </head>
@@ -44,6 +48,18 @@
     <span class="repo" id="repo"></span>
   </div>
   <div class="bar">
+    <div>
+      <div class="cap">기간</div>
+      <div class="seg" id="granseg">
+        <button data-g="day">일간</button>
+        <button data-g="week">주간</button>
+        <button data-g="month" class="on">월간</button>
+      </div>
+    </div>
+    <div>
+      <div class="cap" id="psel-cap">기간 선택</div>
+      <select id="psel"></select>
+    </div>
     <button class="reload" id="reload">새로고침</button>
     <span class="sync" id="sync"></span>
     <label class="upload">파일 직접 업로드<input type="file" id="file" accept=".csv" style="display:none"></label>
@@ -54,10 +70,10 @@
 
 <script>
 const OWNER="kaioh1010", REPO="cafe24-tracker", BRANCH="main", PATH="data/daily_sales.csv";
-const NAVY="#12283F", QTY="#1D9E75", REV="#D85A30";
+const QTY="#1D9E75", REV="#D85A30";
 document.getElementById("repo").textContent = OWNER+"/"+REPO;
 
-let rows=[], gran="month", metric="revenue", period="";
+let rows=[], gran="month", period="";
 
 function isoWeek(d){
   const dt=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
@@ -105,46 +121,53 @@ function periods(){
   rows.forEach(r=>{const k=periodKey(r.date,gran); if(k)s.add(k);});
   return [...s].sort().reverse();
 }
-function render(){
-  const ps=periods();
-  const active=(period&&ps.includes(period))?period:(ps[0]||"");
-  period=active;
+function topBy(active,metric){
   const agg={};
   rows.forEach(r=>{
     if(periodKey(r.date,gran)!==active)return;
     if(!agg[r.product_no])agg[r.product_no]={name:r.product_name,pno:r.product_no,quantity:0,revenue:0};
     agg[r.product_no].quantity+=r.quantity; agg[r.product_no].revenue+=r.revenue;
   });
-  const top=Object.values(agg).sort((a,b)=>b[metric]-a[metric]).slice(0,10);
-  const max=top.length?top[0][metric]:0;
-  const gl={day:"일간",week:"주간",month:"월간"};
+  return Object.values(agg).sort((a,b)=>b[metric]-a[metric]).slice(0,10);
+}
+function colHtml(title,color,list,metric){
+  const max=list.length?list[0][metric]:0;
   const fmt=v=>metric==="revenue"?"₩"+Math.round(v).toLocaleString():v.toLocaleString()+"개";
-
-  let h='<div class="controls">';
-  h+=seg("기간",gran,[["day","일간"],["week","주간"],["month","월간"]],"g");
-  h+=seg("기준",metric,[["revenue","매출"],["quantity","판매량"]],"m");
-  h+='<div><div class="cap">'+gl[gran]+' 선택</div><select id="psel">'+ps.map(p=>'<option '+(p===active?"selected":"")+'>'+p+'</option>').join("")+'</select></div>';
-  h+='</div><div class="list">';
-  if(top.length){
-    top.forEach((r,i)=>{
+  let h='<div class="col '+(metric==="revenue"?"rev":"qty")+'"><h2><span class="dot" style="background:'+color+'"></span>'+title+'</h2>';
+  if(list.length){
+    list.forEach((r,i)=>{
       h+='<div class="row"><div class="rank'+(i<3?" top":"")+'">'+(i+1)+'</div>'
         +'<div class="name"><div class="nm">'+(r.name||r.pno)+'</div>'
-        +'<div class="track"><div class="fill" style="width:'+(max?(r[metric]/max*100):0)+'%;background:'+(metric==="revenue"?REV:QTY)+'"></div></div></div>'
+        +'<div class="track"><div class="fill" style="width:'+(max?(r[metric]/max*100):0)+'%;background:'+color+'"></div></div></div>'
         +'<div class="val">'+fmt(r[metric])+'</div></div>';
     });
-  }else{ h+='<div class="empty">해당 기간 데이터가 없습니다.</div>'; }
-  h+='</div><div class="foot">'+gl[gran]+' · '+(metric==="revenue"?"매출":"판매량")+' 기준 · '+active+' · 상품 '+top.length+'종</div>';
-  document.getElementById("app").innerHTML=h;
+  }else{ h+='<div class="empty">데이터가 없습니다.</div>'; }
+  h+='</div>';
+  return h;
+}
+function render(){
+  const ps=periods();
+  const active=(period&&ps.includes(period))?period:(ps[0]||"");
+  period=active;
+  const gl={day:"일간",week:"주간",month:"월간"};
 
-  document.querySelectorAll("[data-g]").forEach(b=>b.onclick=()=>{gran=b.dataset.g;period="";render();});
-  document.querySelectorAll("[data-m]").forEach(b=>b.onclick=()=>{metric=b.dataset.m;render();});
-  const sel=document.getElementById("psel"); if(sel)sel.onchange=()=>{period=sel.value;render();};
+  // 기간 셀렉트 갱신
+  document.getElementById("psel-cap").textContent=gl[gran]+" 선택";
+  const sel=document.getElementById("psel");
+  sel.innerHTML=ps.map(p=>'<option '+(p===active?"selected":"")+'>'+p+'</option>').join("");
+
+  const qty=topBy(active,"quantity");
+  const rev=topBy(active,"revenue");
+  document.getElementById("app").innerHTML=
+    '<div class="cols">'+colHtml("판매량 기준",QTY,qty,"quantity")+colHtml("매출 기준",REV,rev,"revenue")+'</div>'
+    +'<div class="foot">'+gl[gran]+' · '+active+' · 판매량 '+qty.length+'종 / 매출 '+rev.length+'종</div>';
 }
-function seg(label,val,opts,kind){
-  return '<div><div class="cap">'+label+'</div><div class="seg">'+
-    opts.map(o=>'<button data-'+(kind==="g"?"g":"m")+'="'+o[0]+'" class="'+(val===o[0]?"on":"")+'">'+o[1]+'</button>').join("")+
-    '</div></div>';
-}
+document.querySelectorAll("[data-g]").forEach(b=>b.onclick=()=>{
+  gran=b.dataset.g; period="";
+  document.querySelectorAll("[data-g]").forEach(x=>x.classList.toggle("on",x===b));
+  render();
+});
+document.getElementById("psel").onchange=e=>{period=e.target.value;render();};
 document.getElementById("reload").onclick=load;
 document.getElementById("file").onchange=e=>{
   const f=e.target.files[0]; if(!f)return;
