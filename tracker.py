@@ -27,22 +27,45 @@ KST = datetime.timezone(datetime.timedelta(hours=9))
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 CSV_PATH = os.path.join(DATA_DIR, "daily_sales.csv")
 
-# 매출에서 제외할 주문상태(취소/환불/교환). 필요에 맞게 조정.
-EXCLUDE_STATUS = {"C40", "C41", "C42", "C43", "C44", "C45", "C46", "C47", "C48", "C49"}
+# 순매출 집계: 취소(C)/교환(E)/반품(R) 상태의 품목은 제외.
+# 정상 품목도 부분취소 수량(claim_quantity)을 빼고 실판매 수량으로 계산.
+CANCEL_PREFIXES = ("C", "E", "R")
+
+# 실결제(순매출)에서 차감할 주문 단위 할인 필드 (배송비 관련 제외)
+ORDER_DISCOUNT_FIELDS = (
+    "coupon_discount_price",        # 주문 쿠폰
+    "points_spent_amount",          # 적립금 사용
+    "credits_spent_amount",         # 예치금 사용
+    "membership_discount_amount",   # 회원 할인
+    "set_product_discount_amount",  # 세트상품 할인
+    "app_discount_amount",          # 앱 할인
+    "market_other_discount_amount", # 마켓 기타 할인
+)
+
+
+def _f(v):
+    """문자열/None 금액을 float로."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _item_base(it):
+    """품목의 상품 기준액: option_price가 있으면 그것, 없으면 product_price*qty."""
+    op = _f(it.get("option_price"))
+    if op > 0:
+        return op
+    return _f(it.get("product_price")) * int(it.get("quantity", 0) or 0)
 
 
 def _req(url, method="GET", headers=None, data=None):
     req = urllib.request.Request(url, method=method, headers=headers or {}, data=data)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            raw = r.read().decode()
-            return r.status, (json.loads(raw) if raw.strip() else {})
+            return r.status, json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
-        raw = e.read().decode()
-        try:
-            return e.code, json.loads(raw)
-        except Exception:
-            return e.code, {"raw": raw}
+        return e.code, json.loads(e.read().decode())
 
 
 def refresh_access_token():
@@ -123,18 +146,54 @@ def fetch_orders(access_token, day):
 
 
 def aggregate(orders):
-    """product_no별 수량/매출 집계."""
+    """상품별 순매출/판매량 집계.
+    - 취소/교환/반품 상태 품목 제외
+    - 부분취소 수량 차감(quantity - claim_quantity)
+    - 실결제 기준: 품목 자체 할인 차감 후, 주문 단위 할인을 상품기준액 비율로 배분
+    - 적립금 사용 등도 차감(실결제금액 기준)
+    """
     agg = {}
     for o in orders:
-        for it in o.get("items", []):
-            if it.get("order_status") in EXCLUDE_STATUS:
+        items = o.get("items", [])
+
+        # 이 주문에서 정상(비취소) 품목만 대상으로 상품기준액 비율 계산
+        normal = [it for it in items
+                  if not str(it.get("order_status", "")).startswith(CANCEL_PREFIXES)]
+        base_sum = sum(_item_base(it) for it in normal)
+        if base_sum <= 0:
+            continue
+
+        # 주문 단위 할인 총액(배분 대상)
+        aoa = o.get("actual_order_amount") or {}
+        order_discount = sum(_f(aoa.get(k)) for k in ORDER_DISCOUNT_FIELDS)
+
+        for it in normal:
+            qty_ordered = int(it.get("quantity", 0) or 0)
+            claim = int(it.get("claim_quantity", 0) or 0)
+            qty = qty_ordered - claim
+            if qty <= 0:
                 continue
+
+            base = _item_base(it)
+            # 부분취소 시 상품기준액도 실판매 비율로 축소
+            if qty_ordered > 0 and qty != qty_ordered:
+                base = base * qty / qty_ordered
+
+            # 품목 자체 할인
+            item_disc = _f(it.get("additional_discount_price")) + _f(it.get("coupon_discount_price"))
+            if qty_ordered > 0 and qty != qty_ordered:
+                item_disc = item_disc * qty / qty_ordered
+
+            # 주문 단위 할인을 상품기준액 비율로 배분
+            share = (base / base_sum) if base_sum else 0
+            alloc = order_discount * share
+
+            revenue = base - item_disc - alloc
+            if revenue < 0:
+                revenue = 0.0
+
             pno = it.get("product_no")
             name = it.get("product_name", "")
-            qty = int(it.get("quantity", 0) or 0)
-            price = float(it.get("product_price", 0) or 0)
-            disc = float(it.get("additional_discount_price", 0) or 0)
-            revenue = (price * qty) - disc
             if pno not in agg:
                 agg[pno] = {"product_name": name, "qty": 0, "revenue": 0.0}
             agg[pno]["qty"] += qty
