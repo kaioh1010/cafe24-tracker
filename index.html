@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>상품 판매 TOP 10</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root{--navy:#12283F;--ink:#1a2b3c;--slate:#5a6b7b;--line:#e3e0d8;--paper:#f5f2ea;--qty:#1D9E75;--rev:#D85A30;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:ui-sans-serif,system-ui,-apple-system,"Malgun Gothic",sans-serif;background:var(--paper);color:var(--ink);min-height:100vh;padding:32px 24px;}
+  .wrap{max-width:860px;margin:0 auto;}
+  .head{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;border-bottom:2px solid var(--navy);padding-bottom:14px;}
+  h1{font-size:26px;font-weight:700;letter-spacing:-0.02em;}
+  .repo{font-size:13px;color:var(--slate);}
+  .bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px;}
+  button.reload{padding:8px 16px;font-size:14px;border:none;border-radius:8px;cursor:pointer;background:var(--navy);color:#fff;font-weight:600;}
+  .sync{font-size:12px;color:var(--slate);}
+  .upload{margin-left:auto;font-size:13px;color:var(--navy);cursor:pointer;text-decoration:underline;}
+  .err{margin-top:14px;padding:12px 14px;background:#faece7;border:1px solid var(--rev);border-radius:8px;font-size:13px;color:#712b13;}
+  .controls{display:flex;gap:20px;flex-wrap:wrap;margin-top:22px;align-items:flex-end;}
+  .cap{font-size:12px;color:var(--slate);margin-bottom:6px;}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;}
+  .seg button{padding:8px 16px;font-size:14px;border:none;cursor:pointer;background:transparent;color:var(--ink);}
+  .seg button.on{background:var(--navy);color:#fff;font-weight:600;}
+  select{padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff;color:var(--ink);min-width:130px;}
+  .list{margin-top:24px;}
+  .row{display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);}
+  .rank{width:26px;text-align:right;font-size:15px;font-weight:700;color:var(--slate);}
+  .rank.top{color:var(--navy);}
+  .name{flex:1;min-width:0;}
+  .nm{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .track{height:6px;background:#e9e5db;border-radius:3px;margin-top:6px;overflow:hidden;}
+  .fill{height:100%;border-radius:3px;}
+  .val{width:130px;text-align:right;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;}
+  .foot{margin-top:18px;font-size:12px;color:var(--slate);}
+  .empty{color:var(--slate);font-size:14px;padding:20px 0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>상품 판매 TOP 10</h1>
+    <span class="repo" id="repo"></span>
+  </div>
+  <div class="bar">
+    <button class="reload" id="reload">새로고침</button>
+    <span class="sync" id="sync"></span>
+    <label class="upload">파일 직접 업로드<input type="file" id="file" accept=".csv" style="display:none"></label>
+  </div>
+  <div id="errbox"></div>
+  <div id="app"></div>
+</div>
+
+<script>
+const OWNER="kaioh1010", REPO="cafe24-tracker", BRANCH="main", PATH="data/daily_sales.csv";
+const NAVY="#12283F", QTY="#1D9E75", REV="#D85A30";
+document.getElementById("repo").textContent = OWNER+"/"+REPO;
+
+let rows=[], gran="month", metric="revenue", period="";
+
+function isoWeek(d){
+  const dt=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
+  const day=dt.getUTCDay()||7; dt.setUTCDate(dt.getUTCDate()+4-day);
+  const ys=new Date(Date.UTC(dt.getUTCFullYear(),0,1));
+  const wk=Math.ceil(((dt-ys)/86400000+1)/7);
+  return dt.getUTCFullYear()+"-W"+String(wk).padStart(2,"0");
+}
+function periodKey(ds,g){
+  const d=new Date(ds+"T00:00:00"); if(isNaN(d))return null;
+  if(g==="day")return ds;
+  if(g==="week")return isoWeek(d);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+}
+function parseCsv(t){
+  const res=Papa.parse(t,{header:true,skipEmptyLines:true});
+  return res.data.map(r=>({
+    date:(r.date||"").trim(), product_no:(r.product_no||"").trim(),
+    product_name:(r.product_name||"").trim(),
+    quantity:Number(r.quantity||0), revenue:Number(r.revenue||0)
+  })).filter(r=>r.date&&r.product_no);
+}
+function showErr(m){
+  document.getElementById("errbox").innerHTML = m
+    ? '<div class="err">자동 로드 실패: '+m+'<br><br>우측 "파일 직접 업로드"로 CSV를 올리면 바로 볼 수 있습니다.</div>'
+    : "";
+}
+async function load(){
+  showErr(""); document.getElementById("sync").textContent="불러오는 중…";
+  try{
+    const url="https://raw.githubusercontent.com/"+OWNER+"/"+REPO+"/"+BRANCH+"/"+PATH+"?t="+Date.now();
+    const r=await fetch(url,{cache:"no-store"});
+    if(!r.ok) throw new Error("응답 "+r.status);
+    const parsed=parseCsv(await r.text());
+    if(!parsed.length) throw new Error("데이터가 비어있습니다.");
+    rows=parsed; period=""; render();
+    document.getElementById("sync").textContent="최근 동기화: "+new Date().toLocaleString("ko-KR");
+  }catch(e){
+    document.getElementById("sync").textContent="";
+    showErr(e.message);
+  }
+}
+function periods(){
+  const s=new Set();
+  rows.forEach(r=>{const k=periodKey(r.date,gran); if(k)s.add(k);});
+  return [...s].sort().reverse();
+}
+function render(){
+  const ps=periods();
+  const active=(period&&ps.includes(period))?period:(ps[0]||"");
+  period=active;
+  const agg={};
+  rows.forEach(r=>{
+    if(periodKey(r.date,gran)!==active)return;
+    if(!agg[r.product_no])agg[r.product_no]={name:r.product_name,pno:r.product_no,quantity:0,revenue:0};
+    agg[r.product_no].quantity+=r.quantity; agg[r.product_no].revenue+=r.revenue;
+  });
+  const top=Object.values(agg).sort((a,b)=>b[metric]-a[metric]).slice(0,10);
+  const max=top.length?top[0][metric]:0;
+  const gl={day:"일간",week:"주간",month:"월간"};
+  const fmt=v=>metric==="revenue"?"₩"+Math.round(v).toLocaleString():v.toLocaleString()+"개";
+
+  let h='<div class="controls">';
+  h+=seg("기간",gran,[["day","일간"],["week","주간"],["month","월간"]],"g");
+  h+=seg("기준",metric,[["revenue","매출"],["quantity","판매량"]],"m");
+  h+='<div><div class="cap">'+gl[gran]+' 선택</div><select id="psel">'+ps.map(p=>'<option '+(p===active?"selected":"")+'>'+p+'</option>').join("")+'</select></div>';
+  h+='</div><div class="list">';
+  if(top.length){
+    top.forEach((r,i)=>{
+      h+='<div class="row"><div class="rank'+(i<3?" top":"")+'">'+(i+1)+'</div>'
+        +'<div class="name"><div class="nm">'+(r.name||r.pno)+'</div>'
+        +'<div class="track"><div class="fill" style="width:'+(max?(r[metric]/max*100):0)+'%;background:'+(metric==="revenue"?REV:QTY)+'"></div></div></div>'
+        +'<div class="val">'+fmt(r[metric])+'</div></div>';
+    });
+  }else{ h+='<div class="empty">해당 기간 데이터가 없습니다.</div>'; }
+  h+='</div><div class="foot">'+gl[gran]+' · '+(metric==="revenue"?"매출":"판매량")+' 기준 · '+active+' · 상품 '+top.length+'종</div>';
+  document.getElementById("app").innerHTML=h;
+
+  document.querySelectorAll("[data-g]").forEach(b=>b.onclick=()=>{gran=b.dataset.g;period="";render();});
+  document.querySelectorAll("[data-m]").forEach(b=>b.onclick=()=>{metric=b.dataset.m;render();});
+  const sel=document.getElementById("psel"); if(sel)sel.onchange=()=>{period=sel.value;render();};
+}
+function seg(label,val,opts,kind){
+  return '<div><div class="cap">'+label+'</div><div class="seg">'+
+    opts.map(o=>'<button data-'+(kind==="g"?"g":"m")+'="'+o[0]+'" class="'+(val===o[0]?"on":"")+'">'+o[1]+'</button>').join("")+
+    '</div></div>';
+}
+document.getElementById("reload").onclick=load;
+document.getElementById("file").onchange=e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{const p=parseCsv(rd.result); if(p.length){rows=p;period="";render();showErr("");document.getElementById("sync").textContent="파일 업로드";}else showErr("파일에 데이터가 없습니다.");};
+  rd.readAsText(f);
+};
+load();
+</script>
+</body>
+</html>
