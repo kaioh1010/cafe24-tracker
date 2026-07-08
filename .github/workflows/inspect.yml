@@ -1,0 +1,31 @@
+name: inspect-order
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: "확인할 날짜 (YYYY-MM-DD, 데이터 있는 날)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pynacl
+      - name: Inspect
+        env:
+          MALL_ID: ${{ secrets.MALL_ID }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.REFRESH_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_REPO: ${{ github.repository }}
+          TARGET_DATE: ${{ github.event.inputs.target_date }}
+        run: python inspect.py
