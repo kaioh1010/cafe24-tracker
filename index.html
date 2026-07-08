@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>상품 판매 TOP 10</title>
+<title>CAFE24 DASHBOARD</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{--navy:#12283F;--ink:#1a2b3c;--slate:#5a6b7b;--line:#e3e0d8;--paper:#f5f2ea;--qty:#1D9E75;--rev:#D85A30;}
   *{box-sizing:border-box;margin:0;padding:0;}
@@ -25,26 +26,40 @@
   select{padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff;color:var(--ink);min-width:130px;}
   .cols{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:26px;}
   @media(max-width:720px){.cols{grid-template-columns:1fr;}}
-  .col h2{font-size:16px;font-weight:600;padding-bottom:10px;border-bottom:2px solid;display:flex;align-items:center;gap:8px;}
+  .col h2{font-size:16px;font-weight:600;padding-bottom:10px;border-bottom:2px solid;display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
   .col.qty h2{border-color:var(--qty);}
   .col.rev h2{border-color:var(--rev);}
+  .h2-left{display:flex;align-items:center;gap:8px;}
+  .h2-total{font-weight:700;font-size:15px;font-variant-numeric:tabular-nums;}
+  .col.qty .h2-total{color:var(--qty);}
+  .col.rev .h2-total{color:var(--rev);}
   .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
   .row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);}
-  .rank{width:22px;text-align:right;font-size:14px;font-weight:700;color:var(--slate);}
+  .rank{width:26px;text-align:right;font-size:14px;font-weight:700;color:var(--slate);}
   .rank.top{color:var(--navy);}
   .name{flex:1;min-width:0;}
   .nm{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .track{height:6px;background:#e9e5db;border-radius:3px;margin-top:6px;overflow:hidden;}
   .fill{height:100%;border-radius:3px;}
   .val{width:110px;text-align:right;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;}
+  .pager{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:14px;flex-wrap:wrap;}
+  .pager button{min-width:30px;padding:5px 9px;font-size:13px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);cursor:pointer;}
+  .pager button.on{background:var(--navy);color:#fff;border-color:var(--navy);font-weight:600;}
+  .pager button:disabled{opacity:.4;cursor:default;}
   .foot{margin-top:20px;font-size:12px;color:var(--slate);}
   .empty{color:var(--slate);font-size:14px;padding:20px 0;}
+  .trend{margin-top:40px;border-top:2px solid var(--navy);padding-top:20px;}
+  .trend-head{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-bottom:16px;}
+  .trend-head h2{font-size:18px;font-weight:600;}
+  .trend-controls{display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;}
+  .chartbox{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px;height:360px;}
+  .prodsel{max-width:260px;}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="head">
-    <h1>상품 판매 TOP 10</h1>
+    <h1>CAFE24 DASHBOARD</h1>
     <span class="repo" id="repo"></span>
   </div>
   <div class="bar">
@@ -66,14 +81,39 @@
   </div>
   <div id="errbox"></div>
   <div id="app"></div>
+
+  <div class="trend" id="trendbox" style="display:none">
+    <div class="trend-head">
+      <h2>상품별 판매량 추이</h2>
+      <div class="trend-controls">
+        <div>
+          <div class="cap">추이 단위</div>
+          <div class="seg" id="tgranseg">
+            <button data-tg="day">일간</button>
+            <button data-tg="week">주간</button>
+            <button data-tg="month" class="on">월간</button>
+          </div>
+        </div>
+        <div>
+          <div class="cap">상품 선택</div>
+          <select class="prodsel" id="prodsel"></select>
+        </div>
+      </div>
+    </div>
+    <div class="chartbox"><canvas id="chart"></canvas></div>
+    <div class="foot" id="trend-foot"></div>
+  </div>
 </div>
 
 <script>
 const OWNER="kaioh1010", REPO="cafe24-tracker", BRANCH="main", PATH="data/daily_sales.csv";
-const QTY="#1D9E75", REV="#D85A30";
+const QTY="#1D9E75", REV="#D85A30", PAGE_SIZE=10;
+const PALETTE=["#1D9E75","#D85A30","#12283F","#B8860B","#7A4F9E","#2E7D32","#C2185B","#0277BD","#EF6C00","#5D4037"];
 document.getElementById("repo").textContent = OWNER+"/"+REPO;
 
-let rows=[], gran="month", period="";
+let rows=[], gran="month", period="", chart=null;
+let selProduct="__top5__", trendGran="month";
+let pageQty=1, pageRev=1;
 
 function isoWeek(d){
   const dt=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
@@ -109,7 +149,7 @@ async function load(){
     if(!r.ok) throw new Error("응답 "+r.status);
     const parsed=parseCsv(await r.text());
     if(!parsed.length) throw new Error("데이터가 비어있습니다.");
-    rows=parsed; period=""; render();
+    rows=parsed; period=""; pageQty=1; pageRev=1; render();
     document.getElementById("sync").textContent="최근 동기화: "+new Date().toLocaleString("ko-KR");
   }catch(e){
     document.getElementById("sync").textContent="";
@@ -121,29 +161,125 @@ function periods(){
   rows.forEach(r=>{const k=periodKey(r.date,gran); if(k)s.add(k);});
   return [...s].sort().reverse();
 }
-function topBy(active,metric){
+function rankBy(active,metric){
   const agg={};
   rows.forEach(r=>{
     if(periodKey(r.date,gran)!==active)return;
     if(!agg[r.product_no])agg[r.product_no]={name:r.product_name,pno:r.product_no,quantity:0,revenue:0};
     agg[r.product_no].quantity+=r.quantity; agg[r.product_no].revenue+=r.revenue;
   });
-  return Object.values(agg).sort((a,b)=>b[metric]-a[metric]).slice(0,10);
+  return Object.values(agg).filter(v=>v[metric]>0).sort((a,b)=>b[metric]-a[metric]);
 }
-function colHtml(title,color,list,metric){
+function colHtml(title,color,list,metric,page,cls){
+  const total=list.length;
+  const grandTotal=list.reduce((s,r)=>s+r[metric],0);
+  const pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
+  const cur=Math.min(page,pages);
+  const start=(cur-1)*PAGE_SIZE;
+  const slice=list.slice(start,start+PAGE_SIZE);
   const max=list.length?list[0][metric]:0;
   const fmt=v=>metric==="revenue"?"₩"+Math.round(v).toLocaleString():v.toLocaleString()+"개";
-  let h='<div class="col '+(metric==="revenue"?"rev":"qty")+'"><h2><span class="dot" style="background:'+color+'"></span>'+title+'</h2>';
-  if(list.length){
-    list.forEach((r,i)=>{
-      h+='<div class="row"><div class="rank'+(i<3?" top":"")+'">'+(i+1)+'</div>'
+  const totalFmt=metric==="revenue"?"₩"+Math.round(grandTotal).toLocaleString():grandTotal.toLocaleString()+"개";
+  let h='<div class="col '+(metric==="revenue"?"rev":"qty")+'"><h2>'
+    +'<span class="h2-left"><span class="dot" style="background:'+color+'"></span>'+title+' <span style="font-weight:400;color:var(--slate);font-size:13px">('+total+'종)</span></span>'
+    +'<span class="h2-total">'+totalFmt+'</span></h2>';
+  if(slice.length){
+    slice.forEach((r,idx)=>{
+      const rank=start+idx+1;
+      h+='<div class="row"><div class="rank'+(rank<=3?" top":"")+'">'+rank+'</div>'
         +'<div class="name"><div class="nm">'+(r.name||r.pno)+'</div>'
         +'<div class="track"><div class="fill" style="width:'+(max?(r[metric]/max*100):0)+'%;background:'+color+'"></div></div></div>'
         +'<div class="val">'+fmt(r[metric])+'</div></div>';
     });
+    // 페이지네이션
+    h+='<div class="pager" data-pager="'+cls+'">';
+    h+='<button data-pg="'+(cur-1)+'"'+(cur<=1?" disabled":"")+'>‹</button>';
+    const win=2;
+    let from=Math.max(1,cur-win), to=Math.min(pages,cur+win);
+    if(from>1)h+='<button data-pg="1">1</button>'+(from>2?'<span style="color:var(--slate)">…</span>':"");
+    for(let p=from;p<=to;p++)h+='<button data-pg="'+p+'" class="'+(p===cur?"on":"")+'">'+p+'</button>';
+    if(to<pages)h+=(to<pages-1?'<span style="color:var(--slate)">…</span>':"")+'<button data-pg="'+pages+'">'+pages+'</button>';
+    h+='<button data-pg="'+(cur+1)+'"'+(cur>=pages?" disabled":"")+'>›</button>';
+    h+='</div>';
   }else{ h+='<div class="empty">데이터가 없습니다.</div>'; }
   h+='</div>';
   return h;
+}
+function allPeriodsAsc(g){
+  const s=new Set();
+  rows.forEach(r=>{const k=periodKey(r.date,g); if(k)s.add(k);});
+  return [...s].sort();
+}
+function allProducts(){
+  const agg={};
+  rows.forEach(r=>{
+    if(!agg[r.product_no])agg[r.product_no]={name:r.product_name,pno:r.product_no,q:0};
+    agg[r.product_no].q+=r.quantity;
+  });
+  return Object.values(agg).sort((a,b)=>b.q-a.q);
+}
+function seriesFor(pno,g,labels){
+  const m={}; labels.forEach(l=>m[l]=0);
+  rows.forEach(r=>{
+    if(r.product_no!==pno)return;
+    const k=periodKey(r.date,g); if(k in m)m[k]+=r.quantity;
+  });
+  return labels.map(l=>m[l]);
+}
+function renderTrend(){
+  const box=document.getElementById("trendbox");
+  if(!rows.length){box.style.display="none";return;}
+  box.style.display="block";
+  const labels=allPeriodsAsc(trendGran);
+  const prods=allProducts();
+
+  const sel=document.getElementById("prodsel");
+  sel.innerHTML='<option value="__top5__">상위 5개 상품</option>'
+    +prods.map(p=>'<option value="'+p.pno+'">'+(p.name||p.pno)+'</option>').join("");
+  sel.value=selProduct;
+
+  let datasets;
+  if(selProduct==="__top5__"){
+    datasets=prods.slice(0,5).map((p,i)=>({
+      label:p.name||p.pno, data:seriesFor(p.pno,trendGran,labels),
+      borderColor:PALETTE[i%PALETTE.length], backgroundColor:PALETTE[i%PALETTE.length],
+      tension:0.3, borderWidth:2, pointRadius:3
+    }));
+  }else{
+    const p=prods.find(x=>x.pno===selProduct);
+    datasets=[{label:(p?p.name:selProduct), data:seriesFor(selProduct,trendGran,labels),
+      borderColor:QTY, backgroundColor:QTY, tension:0.3, borderWidth:2, pointRadius:3, fill:false}];
+  }
+
+  const gl={day:"일간",week:"주간",month:"월간"};
+  document.getElementById("trend-foot").textContent=gl[trendGran]+" 단위 · 판매량(개) 기준 · 전체 기간 "+labels.length+"구간";
+
+  if(chart)chart.destroy();
+  chart=new Chart(document.getElementById("chart"),{
+    type:"line",
+    data:{labels,datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:"index",intersect:false},
+      plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:12}}}},
+      scales:{
+        x:{grid:{display:false},ticks:{font:{size:11}}},
+        y:{beginAtZero:true,ticks:{font:{size:11},precision:0},title:{display:true,text:"판매량(개)"}}
+      }
+    }
+  });
+}
+function bindPagers(){
+  document.querySelectorAll('[data-pager]').forEach(pg=>{
+    const which=pg.getAttribute("data-pager");
+    pg.querySelectorAll("button[data-pg]").forEach(b=>{
+      b.onclick=()=>{
+        const p=parseInt(b.dataset.pg,10);
+        if(which==="qty")pageQty=p; else pageRev=p;
+        render();
+      };
+    });
+  });
 }
 function render(){
   const ps=periods();
@@ -151,28 +287,38 @@ function render(){
   period=active;
   const gl={day:"일간",week:"주간",month:"월간"};
 
-  // 기간 셀렉트 갱신
   document.getElementById("psel-cap").textContent=gl[gran]+" 선택";
   const sel=document.getElementById("psel");
   sel.innerHTML=ps.map(p=>'<option '+(p===active?"selected":"")+'>'+p+'</option>').join("");
 
-  const qty=topBy(active,"quantity");
-  const rev=topBy(active,"revenue");
+  const qty=rankBy(active,"quantity");
+  const rev=rankBy(active,"revenue");
   document.getElementById("app").innerHTML=
-    '<div class="cols">'+colHtml("판매량 기준",QTY,qty,"quantity")+colHtml("매출 기준",REV,rev,"revenue")+'</div>'
+    '<div class="cols">'
+    +colHtml("판매량 TOP",QTY,qty,"quantity",pageQty,"qty")
+    +colHtml("매출 TOP",REV,rev,"revenue",pageRev,"rev")+'</div>'
     +'<div class="foot">'+gl[gran]+' · '+active+' · 판매량 '+qty.length+'종 / 매출 '+rev.length+'종</div>';
+
+  bindPagers();
+  renderTrend();
 }
 document.querySelectorAll("[data-g]").forEach(b=>b.onclick=()=>{
-  gran=b.dataset.g; period="";
+  gran=b.dataset.g; period=""; pageQty=1; pageRev=1;
   document.querySelectorAll("[data-g]").forEach(x=>x.classList.toggle("on",x===b));
   render();
 });
-document.getElementById("psel").onchange=e=>{period=e.target.value;render();};
+document.querySelectorAll("[data-tg]").forEach(b=>b.onclick=()=>{
+  trendGran=b.dataset.tg;
+  document.querySelectorAll("[data-tg]").forEach(x=>x.classList.toggle("on",x===b));
+  renderTrend();
+});
+document.getElementById("psel").onchange=e=>{period=e.target.value;pageQty=1;pageRev=1;render();};
+document.getElementById("prodsel").onchange=e=>{selProduct=e.target.value;renderTrend();};
 document.getElementById("reload").onclick=load;
 document.getElementById("file").onchange=e=>{
   const f=e.target.files[0]; if(!f)return;
   const rd=new FileReader();
-  rd.onload=()=>{const p=parseCsv(rd.result); if(p.length){rows=p;period="";render();showErr("");document.getElementById("sync").textContent="파일 업로드";}else showErr("파일에 데이터가 없습니다.");};
+  rd.onload=()=>{const p=parseCsv(rd.result); if(p.length){rows=p;period="";pageQty=1;pageRev=1;render();showErr("");document.getElementById("sync").textContent="파일 업로드";}else showErr("파일에 데이터가 없습니다.");};
   rd.readAsText(f);
 };
 load();
