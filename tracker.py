@@ -226,9 +226,11 @@ def save_csv(day, agg):
 
 
 def main():
+    # TARGET_DATE 없으면 KST 오늘을 수집(실행 시각이 밀려도 날짜가 안 꼬임).
+    # 전날 확정치가 필요한 경우 워크플로에서 TARGET_DATE로 어제를 명시해 넘김.
     target = os.environ.get("TARGET_DATE")
     if not target:
-        target = (datetime.datetime.now(KST) - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+        target = datetime.datetime.now(KST).strftime("%Y-%m-%d")
 
     tok = refresh_access_token()
     access = tok["access_token"]
