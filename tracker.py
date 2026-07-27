@@ -52,11 +52,33 @@ def _f(v):
 
 
 def _item_base(it):
-    """품목 상품 기준액: option_price가 있으면 그것, 없으면 product_price*qty."""
+    """품목 상품 기준액(판매가): option_price가 있으면 그것, 없으면 product_price*qty."""
     op = _f(it.get("option_price"))
     if op > 0:
         return op
     return _f(it.get("product_price")) * int(it.get("quantity", 0) or 0)
+
+
+# product_no -> 정가배수(retail_price / price) 캐시
+# 옵션 가산 방식: 옵션 정가 = 옵션 판매가 × (retail_price / price)
+_RATIO_CACHE = {}
+
+
+def get_retail_ratio(access_token, product_no):
+    """상품의 retail_price / price 비율 조회. 정가 추정용. 캐시 사용.
+    price가 0이거나 조회 실패 시 1.0(정가=판매가) 반환."""
+    if product_no in _RATIO_CACHE:
+        return _RATIO_CACHE[product_no]
+    hdr = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    status, res = _req(f"{BASE}/api/v2/admin/products/{product_no}", headers=hdr)
+    ratio = 1.0
+    if status == 200 and res.get("product"):
+        price = _f(res["product"].get("price"))
+        retail = _f(res["product"].get("retail_price"))
+        if price > 0 and retail > 0:
+            ratio = retail / price
+    _RATIO_CACHE[product_no] = ratio
+    return ratio
 
 
 def _req(url, method="GET", headers=None, data=None):
@@ -159,42 +181,56 @@ def _order_customer_type(o):
     return "new" if o.get("first_order") == "T" else "repeat"
 
 
-def _order_revenue_and_base(o):
-    """주문의 순매출, 정상가합(할인 전 상품기준액)을 반환.
-    aggregate와 동일한 규칙(취소 제외, 부분취소 반영, 할인 배분)."""
+def _order_revenue_and_base(o, access_token=None):
+    """주문의 순매출, 정상가합, 품목별 순매출을 반환.
+    - 순매출: 판매가(option_price) 기반, 취소 제외/부분취소 반영/할인 배분 (실결제 기준)
+    - 정상가: access_token 있으면 retail_price(정가)*수량, 없으면 판매가 기준
+    """
     items = o.get("items", [])
     normal = [it for it in items
               if not str(it.get("order_status", "")).startswith(CANCEL_PREFIXES)]
-    base_sum = sum(_item_base(it) for it in normal)
-    if base_sum <= 0:
+    sale_sum = sum(_item_base(it) for it in normal)  # 판매가 합 (할인 배분 기준)
+    if sale_sum <= 0:
         return 0.0, 0.0, []
 
     aoa = o.get("actual_order_amount") or {}
     order_discount = sum(_f(aoa.get(k)) for k in ORDER_DISCOUNT_FIELDS)
 
     revenue_total = 0.0
-    base_total = 0.0
-    item_rev = []  # (product_no, product_name, qty, revenue)
+    base_total = 0.0   # 정상가합 (retail 기준)
+    item_rev = []
     for it in normal:
         qty_ordered = int(it.get("quantity", 0) or 0)
         claim = int(it.get("claim_quantity", 0) or 0)
         qty = qty_ordered - claim
         if qty <= 0:
             continue
-        base = _item_base(it)
+
+        sale = _item_base(it)  # 이 품목 판매가(옵션가)
         if qty_ordered > 0 and qty != qty_ordered:
-            base = base * qty / qty_ordered
+            sale = sale * qty / qty_ordered
+
         item_disc = _f(it.get("additional_discount_price")) + _f(it.get("coupon_discount_price"))
         if qty_ordered > 0 and qty != qty_ordered:
             item_disc = item_disc * qty / qty_ordered
-        share = (base / base_sum) if base_sum else 0
+
+        share = (sale / sale_sum) if sale_sum else 0
         alloc = order_discount * share
-        rev = base - item_disc - alloc
+        rev = sale - item_disc - alloc
         if rev < 0:
             rev = 0.0
         revenue_total += rev
+
+        # 정상가: 옵션 가산 방식 -> 옵션 판매가 × (retail_price/price)
+        pno = it.get("product_no")
+        if access_token:
+            ratio = get_retail_ratio(access_token, pno)
+            base = sale * ratio
+        else:
+            base = sale
         base_total += base
-        item_rev.append((it.get("product_no"), it.get("product_name", ""), qty, rev))
+
+        item_rev.append((pno, it.get("product_name", ""), qty, rev))
     return revenue_total, base_total, item_rev
 
 
@@ -211,23 +247,22 @@ def aggregate(orders):
     return agg
 
 
-def aggregate_customer(orders):
+def aggregate_customer(orders, access_token=None):
     """신규/재구매/비회원 요약 + 신규 첫구매 상품 집계.
-    반환: (summary dict, first_products dict)
-    summary: 구분별 {orders, revenue}, 그리고 전체 base_sum(정상가합)/revenue_sum
+    access_token 있으면 정상가를 retail_price(정가) 기준으로 계산.
     """
     summary = {
         "new":    {"orders": 0, "revenue": 0.0},
         "repeat": {"orders": 0, "revenue": 0.0},
         "guest":  {"orders": 0, "revenue": 0.0},
-        "base_sum": 0.0,      # 전체 정상가합
-        "revenue_sum": 0.0,   # 전체 순매출합
-        "order_count": 0,     # 매출 있는 주문 수
+        "base_sum": 0.0,
+        "revenue_sum": 0.0,
+        "order_count": 0,
     }
-    first_products = {}  # pno -> {name, qty, revenue}  (신규 주문만)
+    first_products = {}
 
     for o in orders:
-        rev, base, item_rev = _order_revenue_and_base(o)
+        rev, base, item_rev = _order_revenue_and_base(o, access_token)
         if rev <= 0 and base <= 0:
             continue
         ctype = _order_customer_type(o)
@@ -316,7 +351,7 @@ def main():
     agg = aggregate(orders)
     save_csv(target, agg)
 
-    summary, first_products = aggregate_customer(orders)
+    summary, first_products = aggregate_customer(orders, access)
     save_summary(target, summary)
     save_first_products(target, first_products)
 
