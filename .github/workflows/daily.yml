@@ -1,10 +1,10 @@
-﻿name: cafe24-daily-sales
+name: cafe24-daily-sales
 
 on:
   schedule:
-    # ?꾨궇 ?뺤젙移? 留ㅼ씪 KST 04:00 (UTC 19:00) - ?댁젣 ?좎쭨 ?섏쭛
+    # 전날 확정치: 매일 KST 04:00 (UTC 19:00) - 어제 날짜 수집
     - cron: "0 19 * * *"
-    # ?뱀씪 ?섏쭛: KST 09/12/15/18??(UTC 00/03/06/09?? - KST ?ㅻ뒛 ?섏쭛
+    # 당일 수집: KST 09/12/15/18시 (UTC 00/03/06/09시) - KST 오늘 수집
     - cron: "0 0 * * *"
     - cron: "0 3 * * *"
     - cron: "0 6 * * *"
@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       target_date:
-        description: "?섏쭛???좎쭨 (YYYY-MM-DD, 鍮꾩슦硫?KST ?ㅻ뒛)"
+        description: "수집할 날짜 (YYYY-MM-DD, 비우면 KST 오늘)"
         required: false
 
 permissions:
@@ -27,15 +27,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pynacl
-      - name: ?섏쭛 ?좎쭨 寃곗젙
+      - name: 수집 날짜 결정
         id: pick
         run: |
           echo "event=${{ github.event_name }} schedule=[${{ github.event.schedule }}]"
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "0 19 * * *" ]; then
-            # 04???뺤젙移??ㅼ?以? ?댁젣(KST) ?섏쭛
             echo "date=$(TZ=Asia/Seoul date -d 'yesterday' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
           else
-            # ?뱀씪 ?ㅼ?以?諛??섎룞 ?ㅽ뻾: ?낅젰媛??곗꽑, ?놁쑝硫?tracker.py媛 KST ?ㅻ뒛 ?섏쭛
             echo "date=${{ github.event.inputs.target_date }}" >> "$GITHUB_OUTPUT"
           fi
       - name: Run tracker
@@ -52,6 +50,7 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+          git pull --no-edit origin main || true
           git add data/
           git diff --staged --quiet || git commit -m "data: $(TZ=Asia/Seoul date +%Y-%m-%dT%H:%M) sales"
           git push
