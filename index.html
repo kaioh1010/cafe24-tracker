@@ -38,7 +38,7 @@
   .kcard .down{color:var(--rev);font-weight:600;}
   .mixbar{display:flex;height:12px;border-radius:6px;overflow:hidden;margin-top:6px;background:#e9e5db;}
   .mixbar span{display:block;height:100%;}
-  .mixleg{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--slate);}
+  .mixleg{display:flex;flex-direction:column;gap:4px;margin-top:8px;font-size:11px;color:var(--slate);}
   .mixleg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle;}
   .firstbox{margin-top:16px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;}
   .firstbox h3{font-size:14px;font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:8px;}
@@ -284,9 +284,9 @@ function renderInsights(active){
         +'<span style="width:'+gstPct+'%;background:'+GUEST+'"></span>'
       +'</div>'
       +'<div class="mixleg">'
-        +'<span><i style="background:'+QTY+'"></i>신규 '+newPct.toFixed(0)+'%</span>'
-        +'<span><i style="background:'+NAVY+'"></i>재구매 '+repPct.toFixed(0)+'%</span>'
-        +'<span><i style="background:'+GUEST+'"></i>비회원 '+gstPct.toFixed(0)+'%</span>'
+        +'<span><i style="background:'+QTY+'"></i>신규 '+newPct.toFixed(0)+'% · '+won(cur.new_revenue)+'</span>'
+        +'<span><i style="background:'+NAVY+'"></i>재구매 '+repPct.toFixed(0)+'% · '+won(cur.repeat_revenue)+'</span>'
+        +'<span><i style="background:'+GUEST+'"></i>비회원 '+gstPct.toFixed(0)+'% · '+won(cur.guest_revenue)+'</span>'
       +'</div></div>'
     +'<div class="kcard"><div class="klabel">신규 구매 수</div>'
       +'<div class="kval">'+cur.new_orders.toLocaleString()+'건</div>'
