@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       target_date:
-        description: "확인할 날짜 (YYYY-MM-DD, 비우면 KST 오늘)"
+        description: "확인할 날짜 (미사용, 상품 조회는 날짜 무관)"
         required: false
 
 permissions:

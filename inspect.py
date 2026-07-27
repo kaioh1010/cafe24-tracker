@@ -1,14 +1,11 @@
 """
-신규/재구매 식별자 확인용 (임시). 개인정보 원본은 출력하지 않음.
+상품 API 가격 필드 확인용 (임시).
+- 상품 목록에서 price / retail_price / supply_price 등 가격 계열 필드 확인
+- 주문에 실제 등장한 product_no 몇 개를 상품 API로 조회해 비교
 GitHub Actions에서 1회 실행 후 삭제.
 """
-import os, json, hashlib, datetime
+import os, json, datetime
 import tracker
-
-def h(v):
-    if v is None or v == "":
-        return None
-    return hashlib.sha256(str(v).encode()).hexdigest()[:8]
 
 def main():
     tok = tracker.refresh_access_token()
@@ -16,46 +13,36 @@ def main():
     if tok["refresh_token"] != tracker.REFRESH_TOKEN:
         tracker.update_github_secret("REFRESH_TOKEN", tok["refresh_token"])
 
-    day = os.environ.get("TARGET_DATE") or datetime.datetime.now(tracker.KST).strftime("%Y-%m-%d")
-    orders = tracker.fetch_orders(access, day)
-    print(f"=== {day} 주문 {len(orders)}건 ===\n")
-    if not orders:
-        print("주문 없음. 다른 날짜 지정.")
+    hdr = {"Authorization": f"Bearer {access}", "Content-Type": "application/json"}
+
+    # 1) 상품 목록 몇 개 조회 -> 가격 필드 전체 구조
+    import urllib.parse
+    q = urllib.parse.urlencode({"limit": 3})
+    status, res = tracker._req(f"{tracker.BASE}/api/v2/admin/products?{q}", headers=hdr)
+    print("=== products 응답 status:", status, "===")
+    products = res.get("products", [])
+    if not products:
+        print("상품 없음. 응답:", json.dumps(res, ensure_ascii=False)[:500])
         return
 
-    o = orders[0]
-    id_candidates = ["first_order","member_id","member_email","member_authentication",
-                     "buyer_name","buyer_email","order_id","order_place_id","group_no_when_ordering"]
-    print("=== 주문 레벨 식별 후보 필드 존재/샘플 ===")
-    for k in id_candidates:
-        present = k in o
-        val = o.get(k)
-        if k in ("first_order","member_authentication","order_place_id"):
-            shown = val
-        else:
-            shown = h(val)
-        print(f"  {k}: present={present}, sample={shown}")
+    p = products[0]
+    print("\n=== 첫 상품 가격 계열 필드 ===")
+    for k in sorted(p.keys()):
+        kl = k.lower()
+        if any(t in kl for t in ["price","cost","retail","supply","market"]):
+            print(f"  {k} = {p[k]}")
 
-    fo = {}
-    for od in orders:
-        v = od.get("first_order")
-        fo[str(v)] = fo.get(str(v), 0) + 1
-    print(f"\n=== first_order 값 분포 ===\n{fo}")
+    print("\n=== 첫 상품 전체 키 목록 ===")
+    print(sorted(p.keys()))
 
-    member_cnt = sum(1 for od in orders if od.get("member_id"))
-    print(f"\n=== 회원 주문 {member_cnt} / 비회원 {len(orders)-member_cnt} ===")
-
-    ma = {}
-    for od in orders:
-        v = od.get("member_authentication")
-        ma[str(v)] = ma.get(str(v), 0) + 1
-    print(f"\n=== member_authentication 분포 ===\n{ma}")
-
-    from collections import Counter
-    hashes = [h(od.get("member_id")) for od in orders if od.get("member_id")]
-    c = Counter(hashes)
-    repeat = {k:v for k,v in c.items() if v>1}
-    print(f"\n=== 이 날짜 내 동일 회원 복수주문(해시:건수) ===\n{repeat if repeat else '없음'}")
+    # 2) 특정 product_no 하나 상세 조회 (주문에 자주 나온 195 등)
+    for pno in [195, 82, 11]:
+        s2, r2 = tracker._req(f"{tracker.BASE}/api/v2/admin/products/{pno}", headers=hdr)
+        if s2 == 200 and r2.get("product"):
+            pr = r2["product"]
+            print(f"\n=== product_no {pno}: {pr.get('product_name','')} ===")
+            for k in ["price","retail_price","supply_price","product_price"]:
+                print(f"  {k} = {pr.get(k)}")
 
 if __name__ == "__main__":
     main()
