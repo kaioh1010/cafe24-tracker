@@ -144,7 +144,8 @@ document.getElementById("repo").textContent = OWNER+"/"+REPO;
 let rows=[], summaryRows=[], firstRows=[];
 let gran="month", period="", chart=null;
 let selProduct="__top5__", trendGran="month";
-let pageQty=1, pageRev=1;
+let pageQty=1, pageRev=1, pageFirst=1;
+const FIRST_PAGE_SIZE=5;
 
 function isoWeek(d){
   const dt=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
@@ -233,14 +234,14 @@ function summaryForPeriod(pkey){
   });
   return acc;
 }
-function firstTop(active,n){
+function firstAll(active){
   const agg={};
   firstRows.forEach(r=>{
     if(periodKey(r.date,gran)!==active)return;
     if(!agg[r.product_no])agg[r.product_no]={name:r.product_name,pno:r.product_no,quantity:0,revenue:0};
     agg[r.product_no].quantity+=r.quantity; agg[r.product_no].revenue+=r.revenue;
   });
-  return Object.values(agg).sort((a,b)=>b.revenue-a.revenue).slice(0,n);
+  return Object.values(agg).sort((a,b)=>b.revenue-a.revenue);
 }
 function won(v){return "₩"+Math.round(v).toLocaleString();}
 function pct(v){return (v>=0?"+":"")+v.toFixed(1)+"%";}
@@ -298,18 +299,35 @@ function renderInsights(active){
       +'<div class="ksub">평균 할인율 '+(100-discRatio).toFixed(1)+'%</div></div>'
     +'</div>';
 
-  // 첫구매 상품 Top3
-  const ft=firstTop(active,3);
+  // 첫구매 상품 (전체, 5개씩 페이지네이션)
+  const ft=firstAll(active);
   if(ft.length){
-    let h='<div class="firstbox"><h3><span class="dot" style="background:'+QTY+'"></span>첫구매 상품 Top 3</h3>';
-    ft.forEach((r,i)=>{
-      h+='<div class="frow"><div class="frank">'+(i+1)+'</div>'
+    const pages=Math.max(1,Math.ceil(ft.length/FIRST_PAGE_SIZE));
+    const curp=Math.min(pageFirst,pages);
+    const start=(curp-1)*FIRST_PAGE_SIZE;
+    const slice=ft.slice(start,start+FIRST_PAGE_SIZE);
+    let h='<div class="firstbox"><h3><span class="dot" style="background:'+QTY+'"></span>첫구매 상품 <span style="font-weight:400;color:var(--slate);font-size:12px">('+ft.length+'종)</span></h3>';
+    slice.forEach((r,i)=>{
+      const rank=start+i+1;
+      h+='<div class="frow"><div class="frank">'+rank+'</div>'
         +'<div class="fname">'+(r.name||r.pno)+'</div>'
         +'<div class="fqty">'+r.quantity.toLocaleString()+'개</div>'
         +'<div class="frev">'+won(r.revenue)+'</div></div>';
     });
+    if(pages>1){
+      h+='<div class="pager" data-pager="first">';
+      h+='<button data-pg="'+(curp-1)+'"'+(curp<=1?" disabled":"")+'>‹</button>';
+      let from=Math.max(1,curp-2),to=Math.min(pages,curp+2);
+      if(from>1)h+='<button data-pg="1">1</button>'+(from>2?'<span style="color:var(--slate)">…</span>':"");
+      for(let p=from;p<=to;p++)h+='<button data-pg="'+p+'" class="'+(p===curp?"on":"")+'">'+p+'</button>';
+      if(to<pages)h+=(to<pages-1?'<span style="color:var(--slate)">…</span>':"")+'<button data-pg="'+pages+'">'+pages+'</button>';
+      h+='<button data-pg="'+(curp+1)+'"'+(curp>=pages?" disabled":"")+'>›</button></div>';
+    }
     h+='</div>';
     box.insertAdjacentHTML("beforeend",h);
+    box.querySelectorAll('[data-pager="first"] button[data-pg]').forEach(b=>{
+      b.onclick=()=>{pageFirst=parseInt(b.dataset.pg,10);renderInsights(active);};
+    });
   }
 }
 
@@ -411,14 +429,14 @@ function render(){
   renderTrend();
 }
 document.querySelectorAll("[data-g]").forEach(b=>b.onclick=()=>{
-  gran=b.dataset.g;period="";pageQty=1;pageRev=1;
+  gran=b.dataset.g;period="";pageQty=1;pageRev=1;pageFirst=1;
   document.querySelectorAll("[data-g]").forEach(x=>x.classList.toggle("on",x===b));render();
 });
 document.querySelectorAll("[data-tg]").forEach(b=>b.onclick=()=>{
   trendGran=b.dataset.tg;
   document.querySelectorAll("[data-tg]").forEach(x=>x.classList.toggle("on",x===b));renderTrend();
 });
-document.getElementById("psel").onchange=e=>{period=e.target.value;pageQty=1;pageRev=1;render();};
+document.getElementById("psel").onchange=e=>{period=e.target.value;pageQty=1;pageRev=1;pageFirst=1;render();};
 document.getElementById("prodsel").onchange=e=>{selProduct=e.target.value;renderTrend();};
 document.getElementById("reload").onclick=load;
 document.getElementById("file").onchange=e=>{
